@@ -1,7 +1,7 @@
 from flask import render_template, request, redirect, url_for, flash, session, jsonify, make_response
 from app import app, db
 from models import User, WorkCenter, ProductionOrder, Department
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 from openpyxl import Workbook  # type: ignore
 from openpyxl.styles import Font, PatternFill, Alignment  # type: ignore
@@ -47,7 +47,25 @@ def in_orders():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
-    workcenters = WorkCenter.query.filter_by(is_active=True).all()
+    # Get current user
+    current_user = User.query.get(session['user_id'])
+    
+    # Filter work centers based on user's department
+    if current_user and current_user.department:
+        # Get departments that match user's department
+        user_departments = Department.query.filter_by(name=current_user.department).all()
+        if user_departments:
+            # Get work centers assigned to user's department
+            workcenters = WorkCenter.query.filter(
+                WorkCenter.is_active == True,
+                WorkCenter.departments.any(Department.id.in_([dept.id for dept in user_departments]))
+            ).all()
+        else:
+            workcenters = []
+    else:
+        # If user has no department or admin, show all work centers
+        workcenters = WorkCenter.query.filter_by(is_active=True).all()
+    
     return render_template('in_orders.html', workcenters=workcenters)
 
 @app.route('/out_orders')
@@ -55,7 +73,25 @@ def out_orders():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
-    workcenters = WorkCenter.query.filter_by(is_active=True).all()
+    # Get current user
+    current_user = User.query.get(session['user_id'])
+    
+    # Filter work centers based on user's department
+    if current_user and current_user.department:
+        # Get departments that match user's department
+        user_departments = Department.query.filter_by(name=current_user.department).all()
+        if user_departments:
+            # Get work centers assigned to user's department
+            workcenters = WorkCenter.query.filter(
+                WorkCenter.is_active == True,
+                WorkCenter.departments.any(Department.id.in_([dept.id for dept in user_departments]))
+            ).all()
+        else:
+            workcenters = []
+    else:
+        # If user has no department or admin, show all work centers
+        workcenters = WorkCenter.query.filter_by(is_active=True).all()
+    
     return render_template('out_orders.html', workcenters=workcenters)
 
 @app.route('/save_orders', methods=['POST'])
@@ -100,34 +136,113 @@ def reports():
         return redirect(url_for('login'))
     
     search = request.args.get('search', '')
-    sort_by = request.args.get('sort', 'created_at')
-    order = request.args.get('order', 'desc')
+    workcenter_filter = request.args.get('workcenter', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
     
     query = db.session.query(ProductionOrder).join(WorkCenter).join(User)
     
+    # Apply filters
     if search:
         query = query.filter(ProductionOrder.production_order.contains(search))
     
-    # Sorting
-    if sort_by == 'created_at':
-        if order == 'asc':
-            query = query.order_by(ProductionOrder.created_at.asc())
-        else:
-            query = query.order_by(ProductionOrder.created_at.desc())
-    elif sort_by == 'production_order':
-        if order == 'asc':
-            query = query.order_by(ProductionOrder.production_order.asc())
-        else:
-            query = query.order_by(ProductionOrder.production_order.desc())
-    elif sort_by == 'quantity':
-        if order == 'asc':
-            query = query.order_by(ProductionOrder.quantity.asc())
-        else:
-            query = query.order_by(ProductionOrder.quantity.desc())
+    if workcenter_filter:
+        query = query.filter(ProductionOrder.workcenter_id == int(workcenter_filter))
     
-    orders = query.all()
+    if date_from:
+        from datetime import datetime
+        date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+        query = query.filter(db.func.date(ProductionOrder.created_at) >= date_from_obj)
     
-    return render_template('reports.html', orders=orders, search=search, sort_by=sort_by, order=order)
+    if date_to:
+        from datetime import datetime
+        date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+        query = query.filter(db.func.date(ProductionOrder.created_at) <= date_to_obj)
+    
+    # Default sorting by created_at desc
+    orders = query.order_by(ProductionOrder.created_at.desc()).all()
+    
+    # Convert UTC times to IST for each order
+    for order in orders:
+        ist_time = order.created_at + timedelta(hours=5, minutes=30)
+        order.created_at_ist = ist_time.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Get all work centers for the filter dropdown
+    workcenters = WorkCenter.query.filter_by(is_active=True).all()
+    
+    return render_template('reports.html', orders=orders, search=search, 
+                         workcenters=workcenters, workcenter_filter=workcenter_filter,
+                         date_from=date_from, date_to=date_to)
+
+@app.route('/balance_report')
+def balance_report():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    search = request.args.get('search', '')
+    workcenter_filter = request.args.get('workcenter', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    
+    # Get all production orders with user information
+    query = db.session.query(ProductionOrder).join(WorkCenter).join(User)
+    
+    # Apply filters
+    if search:
+        query = query.filter(ProductionOrder.production_order.contains(search))
+    
+    if workcenter_filter:
+        query = query.filter(ProductionOrder.workcenter_id == int(workcenter_filter))
+    
+    if date_from:
+        from datetime import datetime
+        date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+        query = query.filter(db.func.date(ProductionOrder.created_at) >= date_from_obj)
+    
+    if date_to:
+        from datetime import datetime
+        date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+        query = query.filter(db.func.date(ProductionOrder.created_at) <= date_to_obj)
+    
+    all_orders = query.all()
+    
+    # Calculate balance for each production order per work center
+    balance_data = {}
+    
+    for order in all_orders:
+        key = f"{order.production_order}_{order.workcenter_id}"
+        
+        if key not in balance_data:
+            balance_data[key] = {
+                'production_order': order.production_order,
+                'workcenter_name': order.workcenter.name,
+                'workcenter_id': order.workcenter_id,
+                'user_name': order.user.name or order.user.username,
+                'user_department': order.user.department or '-',
+                'total_in': 0,
+                'total_out': 0,
+                'balance': 0
+            }
+        
+        if order.order_type == 'IN':
+            balance_data[key]['total_in'] += order.quantity
+        else:
+            balance_data[key]['total_out'] += order.quantity
+    
+    # Calculate balance for each entry
+    for key in balance_data:
+        balance_data[key]['balance'] = balance_data[key]['total_in'] - balance_data[key]['total_out']
+    
+    # Convert to list and sort by production order, work center
+    balance_list = list(balance_data.values())
+    balance_list.sort(key=lambda x: (x['production_order'], x['workcenter_name']))
+    
+    # Get all work centers for the filter dropdown
+    workcenters = WorkCenter.query.filter_by(is_active=True).all()
+    
+    return render_template('balance_report.html', balance_data=balance_list, search=search,
+                         workcenters=workcenters, workcenter_filter=workcenter_filter,
+                         date_from=date_from, date_to=date_to)
 
 # Admin Routes
 @app.route('/admin/dashboard')
@@ -201,12 +316,20 @@ def edit_user(user_id):
         return redirect(url_for('login'))
     
     user = User.query.get_or_404(user_id)
+    new_username = request.form['username']
     
-    user.username = request.form['username']
+    # Check if username already exists (excluding current user)
+    existing_user = User.query.filter_by(username=new_username).first()
+    if existing_user and existing_user.id != user_id:
+        flash('Username already exists', 'error')
+        return redirect(url_for('admin_users'))
+    
+    user.username = new_username
     user.name = request.form.get('name', '')
     user.department = request.form.get('department', '')
-    if request.form['password']:
-        user.set_password(request.form['password'])
+    password = request.form.get('password', '').strip()
+    if password:
+        user.set_password(password)
     user.is_admin = 'is_admin' in request.form
     user.is_active = 'is_active' in request.form
     
@@ -232,7 +355,8 @@ def delete_user(user_id):
         return redirect(url_for('admin_users'))
     
     try:
-        user.is_active = False  # Soft delete
+        # Delete user completely from database
+        db.session.delete(user)
         db.session.commit()
         flash('User deleted successfully', 'success')
     except Exception as e:
@@ -248,57 +372,147 @@ def admin_reports():
         return redirect(url_for('login'))
     
     search = request.args.get('search', '')
-    sort_by = request.args.get('sort', 'created_at')
-    order = request.args.get('order', 'desc')
+    workcenter_filter = request.args.get('workcenter', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
     
     query = db.session.query(ProductionOrder).join(WorkCenter).join(User)
     
+    # Apply filters
     if search:
         query = query.filter(ProductionOrder.production_order.contains(search))
     
-    # Sorting
-    if sort_by == 'created_at':
-        if order == 'asc':
-            query = query.order_by(ProductionOrder.created_at.asc())
-        else:
-            query = query.order_by(ProductionOrder.created_at.desc())
-    elif sort_by == 'production_order':
-        if order == 'asc':
-            query = query.order_by(ProductionOrder.production_order.asc())
-        else:
-            query = query.order_by(ProductionOrder.production_order.desc())
-    elif sort_by == 'quantity':
-        if order == 'asc':
-            query = query.order_by(ProductionOrder.quantity.asc())
-        else:
-            query = query.order_by(ProductionOrder.quantity.desc())
+    if workcenter_filter:
+        query = query.filter(ProductionOrder.workcenter_id == int(workcenter_filter))
     
-    orders = query.all()
+    if date_from:
+        from datetime import datetime
+        date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+        query = query.filter(db.func.date(ProductionOrder.created_at) >= date_from_obj)
     
-    return render_template('admin_reports.html', orders=orders, search=search, sort_by=sort_by, order=order)
+    if date_to:
+        from datetime import datetime
+        date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+        query = query.filter(db.func.date(ProductionOrder.created_at) <= date_to_obj)
+    
+    # Default sorting by created_at desc
+    orders = query.order_by(ProductionOrder.created_at.desc()).all()
+    
+    # Convert UTC times to IST for each order
+    for order in orders:
+        ist_time = order.created_at + timedelta(hours=5, minutes=30)
+        order.created_at_ist = ist_time.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Get all work centers for the filter dropdown
+    workcenters = WorkCenter.query.filter_by(is_active=True).all()
+    
+    return render_template('admin_reports.html', orders=orders, search=search,
+                         workcenters=workcenters, workcenter_filter=workcenter_filter,
+                         date_from=date_from, date_to=date_to)
+
+@app.route('/admin/balance_report')
+def admin_balance_report():
+    if 'user_id' not in session or not session.get('is_admin'):
+        flash('Access denied. Admin privileges required.', 'error')
+        return redirect(url_for('login'))
+    
+    search = request.args.get('search', '')
+    workcenter_filter = request.args.get('workcenter', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    
+    # Get all production orders with user information
+    query = db.session.query(ProductionOrder).join(WorkCenter).join(User)
+    
+    # Apply filters
+    if search:
+        query = query.filter(ProductionOrder.production_order.contains(search))
+    
+    if workcenter_filter:
+        query = query.filter(ProductionOrder.workcenter_id == int(workcenter_filter))
+    
+    if date_from:
+        from datetime import datetime
+        date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+        query = query.filter(db.func.date(ProductionOrder.created_at) >= date_from_obj)
+    
+    if date_to:
+        from datetime import datetime
+        date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+        query = query.filter(db.func.date(ProductionOrder.created_at) <= date_to_obj)
+    
+    all_orders = query.all()
+    
+    # Calculate balance for each production order per work center per user
+    balance_data = {}
+    
+    for order in all_orders:
+        key = f"{order.production_order}_{order.workcenter_id}_{order.user_id}"
+        
+        if key not in balance_data:
+            balance_data[key] = {
+                'production_order': order.production_order,
+                'workcenter_name': order.workcenter.name,
+                'workcenter_id': order.workcenter_id,
+                'user_name': order.user.name or order.user.username,
+                'user_department': order.user.department or '-',
+                'total_in': 0,
+                'total_out': 0,
+                'balance': 0,
+                'last_activity': order.created_at
+            }
+        
+        if order.order_type == 'IN':
+            balance_data[key]['total_in'] += order.quantity
+        else:
+            balance_data[key]['total_out'] += order.quantity
+        
+        # Track the latest activity date
+        if order.created_at > balance_data[key]['last_activity']:
+            balance_data[key]['last_activity'] = order.created_at
+    
+    # Calculate balance for each entry
+    for key in balance_data:
+        balance_data[key]['balance'] = balance_data[key]['total_in'] - balance_data[key]['total_out']
+        # Convert UTC time to IST (UTC + 5:30)
+        ist_time = balance_data[key]['last_activity'] + timedelta(hours=5, minutes=30)
+        balance_data[key]['last_activity_ist'] = ist_time.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Convert to list and sort by production order, work center, then user name
+    balance_list = list(balance_data.values())
+    balance_list.sort(key=lambda x: (x['production_order'], x['workcenter_name'], x['user_name']))
+    
+    # Get all work centers for the filter dropdown
+    workcenters = WorkCenter.query.filter_by(is_active=True).all()
+    
+    return render_template('admin_balance_report.html', balance_data=balance_list, search=search,
+                         workcenters=workcenters, workcenter_filter=workcenter_filter,
+                         date_from=date_from, date_to=date_to)
 
 @app.route('/admin/export_excel')
 def export_excel():
     if 'user_id' not in session or not session.get('is_admin'):
         return redirect(url_for('login'))
     
-    # Create workbook and worksheet
+    # Create workbook with two worksheets
     wb = Workbook()
-    ws = wb.active
-    if ws is not None:
-        ws.title = "Production Orders Report"
     
-    # Define headers
-    headers = ['Production Order', 'Work Center', 'Quantity', 'Type', 'Name', 'Department', 'Date & Time']
+    # First worksheet: All Production Orders
+    ws1 = wb.active
+    if ws1 is not None:
+        ws1.title = "All Production Orders"
+    
+    # Define headers for all orders
+    headers1 = ['Production Order', 'Work Center', 'Quantity', 'Type', 'Name', 'Department', 'Date & Time']
     
     # Style for headers
     header_font = Font(bold=True)
     header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
     
-    # Add headers
-    if ws is not None:
-        for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header)  # type: ignore
+    # Add headers for first sheet
+    if ws1 is not None:
+        for col, header in enumerate(headers1, 1):
+            cell = ws1.cell(row=1, column=col, value=header)  # type: ignore
             if cell is not None:
                 cell.font = header_font
                 cell.fill = header_fill
@@ -307,18 +521,81 @@ def export_excel():
         # Get all orders
         orders = db.session.query(ProductionOrder).join(WorkCenter).join(User).order_by(ProductionOrder.created_at.desc()).all()
         
-        # Add data
+        # Add data to first sheet
         for row, order in enumerate(orders, 2):
-            ws.cell(row=row, column=1, value=order.production_order)  # type: ignore
-            ws.cell(row=row, column=2, value=order.workcenter.name)  # type: ignore
-            ws.cell(row=row, column=3, value=order.quantity)  # type: ignore
-            ws.cell(row=row, column=4, value=order.order_type)  # type: ignore
-            ws.cell(row=row, column=5, value=order.user.name or order.user.username)  # type: ignore
-            ws.cell(row=row, column=6, value=order.user.department or '-')  # type: ignore
-            ws.cell(row=row, column=7, value=order.created_at.strftime('%Y-%m-%d %H:%M:%S'))  # type: ignore
+            ws1.cell(row=row, column=1, value=order.production_order)  # type: ignore
+            ws1.cell(row=row, column=2, value=order.workcenter.name)  # type: ignore
+            ws1.cell(row=row, column=3, value=order.quantity)  # type: ignore
+            ws1.cell(row=row, column=4, value=order.order_type)  # type: ignore
+            ws1.cell(row=row, column=5, value=order.user.name or order.user.username)  # type: ignore
+            ws1.cell(row=row, column=6, value=order.user.department or '-')  # type: ignore
+            # Convert to IST (UTC + 5:30) for display
+            ist_time = order.created_at + timedelta(hours=5, minutes=30)
+            ws1.cell(row=row, column=7, value=ist_time.strftime('%Y-%m-%d %H:%M:%S') + ' IST')  # type: ignore
+    
+    # Second worksheet: Balance Report
+    ws2 = wb.create_sheet(title="Balance Report")
+    
+    # Define headers for balance report
+    headers2 = ['Production Order', 'Work Center', 'Total IN', 'Total OUT', 'Balance', 'Status']
+    
+    # Add headers for second sheet
+    for col, header in enumerate(headers2, 1):
+        cell = ws2.cell(row=1, column=col, value=header)  # type: ignore
+        if cell is not None:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+    
+    # Calculate balance data (same logic as balance_report route)
+    balance_data = {}
+    
+    for order in orders:
+        key = f"{order.production_order}_{order.workcenter_id}"
         
-        # Auto-adjust column widths
-        if hasattr(ws, 'columns') and hasattr(ws, 'column_dimensions'):
+        if key not in balance_data:
+            balance_data[key] = {
+                'production_order': order.production_order,
+                'workcenter_name': order.workcenter.name,
+                'workcenter_id': order.workcenter_id,
+                'total_in': 0,
+                'total_out': 0,
+                'balance': 0
+            }
+        
+        if order.order_type == 'IN':
+            balance_data[key]['total_in'] += order.quantity
+        else:
+            balance_data[key]['total_out'] += order.quantity
+    
+    # Calculate balance for each entry
+    for key in balance_data:
+        balance_data[key]['balance'] = balance_data[key]['total_in'] - balance_data[key]['total_out']
+    
+    # Convert to list and sort by production order
+    balance_list = list(balance_data.values())
+    balance_list.sort(key=lambda x: (x['production_order'], x['workcenter_name']))
+    
+    # Add balance data to second sheet
+    for row, item in enumerate(balance_list, 2):
+        ws2.cell(row=row, column=1, value=item['production_order'])  # type: ignore
+        ws2.cell(row=row, column=2, value=item['workcenter_name'])  # type: ignore
+        ws2.cell(row=row, column=3, value=item['total_in'])  # type: ignore
+        ws2.cell(row=row, column=4, value=item['total_out'])  # type: ignore
+        ws2.cell(row=row, column=5, value=item['balance'])  # type: ignore
+        
+        # Add status
+        if item['balance'] > 0:
+            status = 'Available'
+        elif item['balance'] == 0:
+            status = 'Balanced'
+        else:
+            status = 'Shortage'
+        ws2.cell(row=row, column=6, value=status)  # type: ignore
+    
+    # Auto-adjust column widths for both sheets
+    for ws in [ws1, ws2]:
+        if ws and hasattr(ws, 'columns') and hasattr(ws, 'column_dimensions'):
             for column in ws.columns:  # type: ignore
                 max_length = 0
                 column_letter = column[0].column_letter
@@ -338,7 +615,7 @@ def export_excel():
     
     # Create response
     response = make_response(output.read())
-    response.headers['Content-Disposition'] = f'attachment; filename=production_orders_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+    response.headers['Content-Disposition'] = f'attachment; filename=production_orders_with_balance_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
     response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     
     return response
@@ -359,10 +636,17 @@ def create_workcenter():
         return redirect(url_for('login'))
     
     name = request.form['name']
+    department_ids = request.form.getlist('departments')
     
     try:
         new_workcenter = WorkCenter()
         new_workcenter.name = name
+        
+        # Assign departments to work center
+        if department_ids:
+            departments = Department.query.filter(Department.id.in_(department_ids)).all()
+            new_workcenter.departments = departments
+        
         db.session.add(new_workcenter)
         db.session.commit()
         flash('Work center created successfully', 'success')
@@ -381,6 +665,14 @@ def edit_workcenter(wc_id):
     workcenter.name = request.form['name']
     workcenter.is_active = 'is_active' in request.form
     
+    # Update department assignments
+    department_ids = request.form.getlist('departments')
+    if department_ids:
+        departments = Department.query.filter(Department.id.in_(department_ids)).all()
+        workcenter.departments = departments
+    else:
+        workcenter.departments = []
+    
     try:
         db.session.commit()
         flash('Work center updated successfully', 'success')
@@ -398,7 +690,8 @@ def delete_workcenter(wc_id):
     workcenter = WorkCenter.query.get_or_404(wc_id)
     
     try:
-        workcenter.is_active = False  # Soft delete
+        # Delete work center completely from database
+        db.session.delete(workcenter)
         db.session.commit()
         flash('Work center deleted successfully', 'success')
     except Exception as e:
@@ -453,7 +746,8 @@ def delete_department(dept_id):
     department = Department.query.get_or_404(dept_id)
     
     try:
-        department.is_active = False  # Soft delete
+        # Delete department completely from database
+        db.session.delete(department)
         db.session.commit()
         flash('Department deleted successfully', 'success')
     except Exception as e:

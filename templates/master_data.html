@@ -22,19 +22,23 @@
                     </div>
                     <div class="card-body">
                         <form method="POST" action="{{ url_for('create_workcenter') }}">
-                            <div class="row">
-                                <div class="col-md-8">
-                                    <label for="wc_name" class="form-label">Work Center Name</label>
-                                    <input type="text" class="form-control" id="wc_name" name="name" 
-                                           placeholder="e.g., WC006 - Testing" required>
-                                </div>
-                                <div class="col-md-4">
-                                    <label class="form-label">&nbsp;</label>
-                                    <button type="submit" class="btn btn-primary d-block w-100">
-                                        <i class="fas fa-plus me-2"></i>Create
-                                    </button>
-                                </div>
+                            <div class="mb-3">
+                                <label for="wc_name" class="form-label">Work Center Name</label>
+                                <input type="text" class="form-control" id="wc_name" name="name" 
+                                       placeholder="e.g., WC006 - Testing" required>
                             </div>
+                            <div class="mb-3">
+                                <label for="wc_departments" class="form-label">Assign to Departments</label>
+                                <select multiple class="form-select" id="wc_departments" name="departments" size="4">
+                                    {% for dept in departments %}
+                                    <option value="{{ dept.id }}">{{ dept.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <small class="form-text text-muted">Hold Ctrl (Cmd on Mac) to select multiple departments</small>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="fas fa-plus me-2"></i>Create Work Center
+                            </button>
                         </form>
                     </div>
                 </div>
@@ -82,8 +86,8 @@
                         <thead>
                             <tr>
                                 <th>Work Center Name</th>
+                                <th>Assigned Departments</th>
                                 <th>Status</th>
-                                <th>Created Date</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -92,19 +96,27 @@
                             <tr>
                                 <td><strong>{{ wc.name }}</strong></td>
                                 <td>
+                                    {% if wc.departments %}
+                                        {% for dept in wc.departments %}
+                                        <span class="badge bg-info me-1">{{ dept.name }}</span>
+                                        {% endfor %}
+                                    {% else %}
+                                    <span class="text-muted">No departments assigned</span>
+                                    {% endif %}
+                                </td>
+                                <td>
                                     {% if wc.is_active %}
                                     <span class="badge bg-success">Active</span>
                                     {% else %}
                                     <span class="badge bg-secondary">Inactive</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ wc.created_at.strftime('%Y-%m-%d') }}</td>
                                 <td>
-                                    <button type="button" class="btn btn-sm btn-warning me-1"
-                                            onclick="editWorkCenter({{ wc.id }}, '{{ wc.name }}', {{ wc.is_active|lower }})">
+                                    <button type="button" class="btn btn-sm btn-warning me-1" 
+                                            onclick="editWorkCenter({{ wc.id }}, '{{ wc.name }}', {{ wc.is_active|lower }}, [{% for dept in wc.departments %}{{ dept.id }}{% if not loop.last %},{% endif %}{% endfor %}])">
                                         <i class="fas fa-edit"></i>
                                     </button>
-                                    <form method="POST" action="{{ url_for('delete_workcenter', wc_id=wc.id) }}"
+                                    <form method="POST" action="{{ url_for('delete_workcenter', wc_id=wc.id) }}" 
                                           class="d-inline" onsubmit="return confirm('Are you sure you want to delete this work center?')">
                                         <button type="submit" class="btn btn-sm btn-danger">
                                             <i class="fas fa-trash"></i>
@@ -126,7 +138,7 @@
                     </div>
                 </div>
             </div>
-
+            
             <!-- Departments List -->
             <div class="col-md-6">
                 <div class="card">
@@ -158,11 +170,11 @@
                                         </td>
                                         <td>{{ dept.created_at.strftime('%Y-%m-%d') }}</td>
                                         <td>
-                                            <button type="button" class="btn btn-sm btn-warning me-1"
+                                            <button type="button" class="btn btn-sm btn-warning me-1" 
                                                     onclick="editDepartment({{ dept.id }}, '{{ dept.name }}', {{ dept.is_active|lower }})">
                                                 <i class="fas fa-edit"></i>
                                             </button>
-                                            <form method="POST" action="{{ url_for('delete_department', dept_id=dept.id) }}"
+                                            <form method="POST" action="{{ url_for('delete_department', dept_id=dept.id) }}" 
                                                   class="d-inline" onsubmit="return confirm('Are you sure you want to delete this department?')">
                                                 <button type="submit" class="btn btn-sm btn-danger">
                                                     <i class="fas fa-trash"></i>
@@ -201,6 +213,15 @@
                     <div class="mb-3">
                         <label for="edit_wc_name" class="form-label">Work Center Name</label>
                         <input type="text" class="form-control" id="edit_wc_name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_wc_departments" class="form-label">Assign to Departments</label>
+                        <select multiple class="form-select" id="edit_wc_departments" name="departments" size="4">
+                            {% for dept in departments %}
+                            <option value="{{ dept.id }}">{{ dept.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <small class="form-text text-muted">Hold Ctrl (Cmd on Mac) to select multiple departments</small>
                     </div>
                     <div class="mb-3">
                         <div class="form-check">
@@ -254,17 +275,23 @@
 
 <script>
 // Function to edit work center
-function editWorkCenter(id, name, isActive) {
+function editWorkCenter(id, name, isActive, departmentIds) {
     const modal = new bootstrap.Modal(document.getElementById('editWorkCenterModal'));
     const form = document.getElementById('editWorkCenterForm');
-
+    
     // Set form action
     form.action = '{{ url_for('edit_workcenter', wc_id=0) }}'.replace('0', id);
-
+    
     // Populate form fields
     document.getElementById('edit_wc_name').value = name;
     document.getElementById('edit_wc_is_active').checked = isActive;
-
+    
+    // Clear and set department selections
+    const departmentSelect = document.getElementById('edit_wc_departments');
+    for (let option of departmentSelect.options) {
+        option.selected = departmentIds.includes(parseInt(option.value));
+    }
+    
     // Show modal
     modal.show();
 }
@@ -273,14 +300,14 @@ function editWorkCenter(id, name, isActive) {
 function editDepartment(id, name, isActive) {
     const modal = new bootstrap.Modal(document.getElementById('editDepartmentModal'));
     const form = document.getElementById('editDepartmentForm');
-
+    
     // Set form action
     form.action = '{{ url_for('edit_department', dept_id=0) }}'.replace('0', id);
-
+    
     // Populate form fields
     document.getElementById('edit_dept_name').value = name;
     document.getElementById('edit_dept_is_active').checked = isActive;
-
+    
     // Show modal
     modal.show();
 }

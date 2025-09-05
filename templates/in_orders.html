@@ -37,14 +37,19 @@
                             </select>
                         </div>
                         
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <label for="production_order" class="form-label">Production Order</label>
                             <input type="text" class="form-control" id="production_order">
                         </div>
                         
-                        <div class="col-md-2">
+                        <div class="col-md-1">
                             <label for="quantity" class="form-label">Quantity</label>
                             <input type="number" class="form-control" id="quantity" min="1">
+                        </div>
+                        
+                        <div class="col-md-2">
+                            <label for="remark" class="form-label">Remark</label>
+                            <input type="text" class="form-control" id="remark" placeholder="Optional remark">
                         </div>
                         
                         <div class="col-md-3">
@@ -91,6 +96,7 @@ function saveOrder() {
     const workcenter = document.getElementById('workcenter');
     const productionOrder = document.getElementById('production_order');
     const quantity = document.getElementById('quantity');
+    const remark = document.getElementById('remark');
     
     // Validation
     if (!workcenter.value) {
@@ -111,8 +117,8 @@ function saveOrder() {
     form.method = 'POST';
     form.action = '{{ url_for("save_orders") }}';
     
-    // Add form data
-    const orderData = `${workcenter.value}|${productionOrder.value.trim()}|${quantity.value}`;
+    // Add form data (including remark)
+    const orderData = `${workcenter.value}|${productionOrder.value.trim()}|${quantity.value}|${remark.value.trim()}`;
     
     form.innerHTML = `
         <input type="hidden" name="order_type" value="IN">
